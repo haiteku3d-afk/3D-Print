@@ -3,96 +3,156 @@ import pandas as pd
 import os
 from datetime import datetime
 
-# Configuración de la página
-st.set_page_config(page_title="Calculadora 3D - Bambu Lab A1", page_icon="🖨️")
+# Configuración de página
+st.set_page_config(page_title="Bambu Lab A1 - Calculadora Pro", layout="wide")
 
-# --- FUNCIONES DE CÁLCULO ---
-def calcular_costos(peso_g, tiempo_total_h, costo_kg, kwh_precio, watts, costo_repuesto, vida_util_h, margen_error):
-    # Costo Material
-    costo_material = (costo_kg / 1000) * peso_g
+# --- 1. FUNCIONES DE CÁLCULO ---
+def calcular_detalles(peso_g, tiempo_h, c_kg, kwh, w, c_rep, v_util, m_err):
+    # Aplicamos el factor de margen (ej: 1.07 para 7%) a cada componente
+    factor_margen = 1 + (m_err / 100)
     
-    # Costo Energía
-    costo_energia = (watts / 1000) * tiempo_total_h * kwh_precio
+    costo_fil = ((c_kg / 1000) * peso_g) * factor_margen
+    costo_ene = ((w / 1000) * tiempo_h * kwh) * factor_margen
+    costo_des = ((c_rep / v_util) * tiempo_h) * factor_margen
     
-    # Costo Desgaste (Basado en hotend de Bambu Lab)
-    costo_desgaste = (costo_repuesto / vida_util_h) * tiempo_total_h
+    total_con_margen = costo_fil + costo_ene + costo_des
     
-    costo_subtotal = costo_material + costo_energia + costo_desgaste
-    costo_total = costo_subtotal * (1 + (margen_error / 100))
-    
-    return round(costo_total)
+    return {
+        "total": round(total_con_margen),
+        "filamento": round(costo_fil),
+        "energia": round(costo_ene),
+        "desgaste": round(costo_des)
+    }
 
-# --- INTERFAZ ---
-st.title("🖨️ Calculadora de Costos - Bambu Lab A1")
+# --- 2. GESTIÓN DE ARCHIVOS (CSV LOCAL) ---
+def cargar_config():
+    if os.path.exists('config.csv'):
+        try:
+            df = pd.read_csv('config.csv')
+            return dict(zip(df['Parámetro'], df['Valor']))
+        except:
+            pass
+    return {"costo_kg": 15000, "kwh_precio": 265, "watts": 130, "costo_repuesto": 40000, "vida_util_h": 2500, "margen_error": 7}
 
+def guardar_config(datos):
+    df = pd.DataFrame(list(datos.items()), columns=['Parámetro', 'Valor'])
+    df.to_csv('config.csv', index=False)
+
+def guardar_historial(nueva_fila):
+    archivo = 'impresiones.csv'
+    df_nueva = pd.DataFrame([nueva_fila])
+    if not os.path.exists(archivo):
+        df_nueva.to_csv(archivo, index=False)
+    else:
+        # Usamos lineterminator para asegurar el salto de línea correcto
+        df_nueva.to_csv(archivo, mode='a', header=False, index=False, lineterminator='\n')
+
+# --- 3. CARGAR DATOS INICIALES ---
+conf = cargar_config()
+
+# --- 4. BARRA LATERAL (SIDEBAR) ---
 with st.sidebar:
     st.header("⚙️ Configuración Global")
-    # Valores típicos para Chile (Ajusta el kWh según tu cuenta de Enel/CGE)
-    costo_kg = st.number_input("Precio Filamento (CLP/kg)", value=20000)
-    kwh_precio = st.number_input("Precio Energía (CLP/kWh)", value=150)
-    watts = st.number_input("Consumo A1 (Watts)", value=130)
-    costo_repuesto = st.number_input("Costo Repuesto (Hotend CLP)", value=15000)
-    vida_util_h = st.number_input("Vida Útil Repuesto (Horas)", value=2500)
-    margen_error = st.slider("Margen de Error (%)", 0, 20, 5)
+    st.info("Estos valores se usan para todos los cálculos.")
+    
+    c_kg = st.number_input("Precio Filamento (CLP/kg)", value=int(conf.get("costo_kg", 15000)))
+    p_kwh = st.number_input("Precio Energía (CLP/kWh)", value=int(conf.get("kwh_precio", 265)))
+    w_avg = st.number_input("Consumo Watts (A1)", value=int(conf.get("watts", 130)))
+    c_rep = st.number_input("Costo Repuestos (CLP)", value=int(conf.get("costo_repuesto", 40000)))
+    v_util = st.number_input("Vida útil Repuesto (Horas)", value=int(conf.get("vida_util_h", 2500)))
+    m_err = st.slider("Margen de Seguridad (%)", 0, 20, int(conf.get("margen_error", 7)))
+    
+    if st.button("💾 Guardar Precios Permanentes"):
+        nuevos_precios = {
+            "costo_kg": c_kg, "kwh_precio": p_kwh, "watts": w_avg,
+            "costo_repuesto": c_rep, "vida_util_h": v_util, "margen_error": m_err
+        }
+        guardar_config(nuevos_precios)
+        st.success("¡Configuración guardada!")
 
-# Formulario de nueva impresión
-with st.container():
-    st.subheader("📊 Nueva Impresión")
-    
-    nombre_pieza = st.text_input("Nombre de la pieza")
-    
-    col_g, col_h, col_m = st.columns(3)
-    with col_g:
-        peso_g = st.number_input("Gramos (Slicer)", min_value=0.1, step=0.1)
-    with col_h:
-        h_input = st.number_input("Horas", min_value=0, step=1)
-    with col_m:
-        m_input = st.number_input("Minutos", min_value=0, max_value=59, step=1)
-    
-    # Convertir tiempo a decimal para el cálculo
-    tiempo_decimal = h_input + (m_input / 60)
-    
-    # Selector de estrategia con nombres claros
-    dict_estrategias = {
-        "3 - Mayorista": 3,
-        "4 - Minorista": 4,
-        "5 - Llavero": 5
-    }
-    seleccion_estrategia = st.selectbox("Estrategia de Venta", options=list(dict_estrategias.keys()))
-    multiplicador = dict_estrategias[seleccion_estrategia]
+# --- 5. INTERFAZ PRINCIPAL ---
+st.title("🖨️ Calculadora de Costos - Bambu Lab A1")
 
-    if st.button("Calcular y Guardar"):
-        if tiempo_decimal == 0:
-            st.error("El tiempo no puede ser 0")
-        else:
-            costo_final = calcular_costos(peso_g, tiempo_decimal, costo_kg, kwh_precio, watts, costo_repuesto, vida_util_h, margen_error)
-            precio_venta = round(costo_final * multiplicador)
-            
-            # Guardar en Historial
-            nueva_fila = {
-                "Fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                "Pieza": nombre_pieza,
-                "Costo Fab.": f"${costo_final:,} CLP",
-                "Precio Venta": f"${precio_venta:,} CLP",
-                "Ganancia": f"${(precio_venta - costo_final):,} CLP"
-            }
-            
-            df_nuevo = pd.DataFrame([nueva_fila])
-            
-            if not os.path.isfile("historial_3d.csv"):
-                df_nuevo.to_csv("historial_3d.csv", index=False)
-            else:
-                df_nuevo.to_csv("historial_3d.csv", mode='a', header=False, index=False)
-                
-            st.success(f"✅ ¡Guardado! Costo: ${costo_final:,} | Venta sugerida: ${precio_venta:,} CLP")
+col_input, col_empty = st.columns([2, 1])
 
-# --- SECCIÓN DE HISTORIAL ---
+with col_input:
+    st.subheader("📊 Datos de la Pieza")
+    nombre = st.text_input("Nombre del Proyecto / Pieza", placeholder="Ej: Llavero Oso")
+    
+    c1, c2, c3 = st.columns(3)
+    with c1: gramos = st.number_input("Gramos totales", min_value=0.1, step=0.1)
+    with c2: h_in = st.number_input("Horas", min_value=0, step=1)
+    with c3: m_in = st.number_input("Minutos", min_value=0, max_value=59, step=1)
+
+    t_decimal = h_in + (m_in / 60)
+    
+    estrategia = st.selectbox("Estrategia de Venta", ["3 - Mayorista", "4 - Minorista", "5 - Llavero"])
+    mult = int(estrategia.split(" - ")[0])
+
+# --- 6. PROCESAR Y MOSTRAR RESULTADOS ---
+if st.button("🚀 Calcular y Registrar Impresión", use_container_width=True):
+    if nombre == "" or t_decimal == 0:
+        st.error("Faltan datos de la pieza o tiempo de impresión.")
+    else:
+        res = calcular_detalles(gramos, t_decimal, c_kg, p_kwh, w_avg, c_rep, v_util, m_err)
+        
+        precio_v = round(res["total"] * mult)
+        costo_f = res["total"]
+        ganancia = precio_v - costo_f
+
+        # DESPLIEGUE DE RESULTADOS (Cuadro Verde)
+        st.divider()
+        st.success(f"### 💰 Sugerencia de Venta: ${precio_v:,} CLP")
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Costo Fabricación", f"${costo_f:,}")
+        m2.metric("Ganancia Estimada", f"${ganancia:,}")
+        m3.metric("Multiplicador", f"x{mult}")
+        
+        # GUARDAR EN HISTORIAL
+        registro = {
+            "Fecha": datetime.now().strftime("%d/%m/%Y %H:%M"),
+            "Pieza": nombre,
+            "Costo Fab": costo_f,
+            "Precio Venta": precio_v,
+            "Ganancia": ganancia,
+            "Tiempo": f"{h_in}h {m_in}m",
+            "Filamento": res["filamento"],
+            "Energia": res["energia"],
+            "Desgaste": res["desgaste"]
+        }
+        guardar_historial(registro)
+        st.balloons()
+
+# --- 7. HISTORIAL Y BORRADO ---
 st.divider()
 st.subheader("📜 Historial de Impresiones")
 
-if os.path.isfile("historial_3d.csv"):
-    historial = pd.read_csv("historial_3d.csv")
-    st.dataframe(historial.sort_index(ascending=False), use_container_width=True)
-    st.download_button("Descargar Excel (CSV)", historial.to_csv(index=False), "historial_3d.csv", "text/csv")
+if os.path.exists('impresiones.csv'):
+    df_hist = pd.read_csv('impresiones.csv')
+    if not df_hist.empty:
+        # Mostramos la tabla (lo más nuevo arriba)
+        st.dataframe(df_hist.iloc[::-1], use_container_width=True)
+        
+        # ZONA DE BORRADO
+        with st.expander("🗑️ Zona de Peligro: Eliminar Registros"):
+            # Creamos lista de opciones identificables
+            lista_piezas = df_hist.apply(lambda x: f"{x['Fecha']} | {x['Pieza']}", axis=1).tolist()
+            seleccion = st.selectbox("Selecciona el registro a eliminar:", lista_piezas)
+            
+            if st.button("Confirmar Eliminación", type="primary"):
+                # Encontramos el índice real en el dataframe original
+                idx_to_remove = lista_piezas.index(seleccion)
+                df_hist = df_hist.drop(df_hist.index[idx_to_remove])
+                # Guardamos el CSV actualizado
+                df_hist.to_csv('impresiones.csv', index=False)
+                st.success("Registro eliminado.")
+                st.rerun() # Recarga la página para limpiar la tabla
+        
+        # BOTÓN DE DESCARGA
+        with open('impresiones.csv', 'rb') as f:
+            st.download_button('📥 Descargar Historial (CSV)', f, file_name='historial_bambu_a1.csv')
+    else:
+        st.info("El historial está vacío.")
 else:
-    st.info("Aún no hay registros.")
+    st.info("No hay datos registrados aún.")

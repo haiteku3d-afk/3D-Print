@@ -1,0 +1,7 @@
+Parámetro,Valor
+costo_kg,15000
+kwh_precio,265
+watts,130
+costo_repuesto,40000
+vida_util_h,2500
+margen_error,7
