@@ -86,7 +86,11 @@ with col_input:
 
     t_decimal = h_in + (m_in / 60)
     
-    estrategia = st.selectbox("Estrategia de Venta", ["3 - Mayorista", "4 - Minorista", "5 - Llavero"])
+    # NUEVAS OPCIONES AÑADIDAS AQUÍ (1 - Precio Costo y 2 - Familiares)
+    estrategia = st.selectbox(
+        "Estrategia de Venta", 
+        ["1 - Precio Costo", "2 - Familiares", "3 - Mayorista", "4 - Minorista", "5 - Llavero"]
+    )
     mult = int(estrategia.split(" - ")[0])
 
 # --- 6. PROCESAR Y MOSTRAR RESULTADOS ---
